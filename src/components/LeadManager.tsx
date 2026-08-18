@@ -18,7 +18,10 @@ import {
   RotateCcw,
   Sparkles,
   ShieldCheck,
-  TrendingDown
+  TrendingDown,
+  Download,
+  FileSpreadsheet,
+  Check
 } from 'lucide-react';
 import { LeadOrg, RiskLevel } from '../types';
 
@@ -41,6 +44,7 @@ export const LeadManager: FC<LeadManagerProps> = ({
   const [sortBy, setSortBy] = useState<'risk' | 'score-asc' | 'score-desc' | 'name' | 'sanction'>('risk');
   const [showAddModal, setShowAddModal] = useState(false);
   const [activeLeadDetails, setActiveLeadDetails] = useState<LeadOrg | null>(leads[0] || null);
+  const [exportFeedback, setExportFeedback] = useState<string | null>(null);
 
   // New Lead Form State
   const [newName, setNewName] = useState('');
@@ -108,6 +112,70 @@ export const LeadManager: FC<LeadManagerProps> = ({
     setSortBy('risk');
   };
 
+  const handleExportCSV = (targetLeads: LeadOrg[], filenamePrefix = 'zpuce_organisations_loi25') => {
+    if (targetLeads.length === 0) return;
+
+    const headers = [
+      "Organisation",
+      "Secteur d'Activité",
+      "Siège Social",
+      "Nombre d'Employés",
+      "Chiffre d'Affaires (M$ CAD)",
+      "Contact CISO / RPRP",
+      "Statut Microsoft Entra ID",
+      "Score Conformité Loi 25 (%)",
+      "Niveau de Risque Global",
+      "Plafond Risque CAI ($ CAD)",
+      "Transfert Hors-Québec (Art. 17)",
+      "RPRP Déclaré CAI (Art. 3.1)",
+      "Vulnérabilités Actives Détectées",
+      "Date Dernier Audit",
+      "Statut Certification",
+      "Notes Gouvernance"
+    ];
+
+    const escapeCSV = (val: any) => {
+      if (val === null || val === undefined) return '""';
+      const str = String(val).replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
+    const rows = targetLeads.map((l) => [
+      escapeCSV(l.name),
+      escapeCSV(l.sector),
+      escapeCSV(l.headquarters),
+      escapeCSV(l.employees),
+      escapeCSV(l.caAnnualMln),
+      escapeCSV(l.cisoContact),
+      escapeCSV(l.entraIdTenantStatus),
+      escapeCSV(l.loi25Score),
+      escapeCSV(l.overallRisk),
+      escapeCSV(l.maxSanctionRisk),
+      escapeCSV(l.crossBorderDataTransfer ? "OUI" : "NON"),
+      escapeCSV(l.caiRegisteredBreachOfficer ? "OUI" : "NON"),
+      escapeCSV(l.activeVulnerabilities.join(" ; ")),
+      escapeCSV(l.lastAuditDate),
+      escapeCSV(l.loi25Score >= 80 ? "Certifié" : l.loi25Score >= 60 ? "Revue Recommandée" : "Non-Conforme"),
+      escapeCSV(l.notes)
+    ]);
+
+    // UTF-8 BOM for Excel French accents support
+    const csvContent = "\uFEFF" + [headers.join(";"), ...rows.map((r) => r.join(";"))].join("\r\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const dateStr = new Date().toISOString().split("T")[0];
+    link.setAttribute("href", url);
+    link.setAttribute("download", `${filenamePrefix}_${dateStr}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    setExportFeedback(`Export CSV réussi (${targetLeads.length} orgs)`);
+    setTimeout(() => setExportFeedback(null), 3000);
+  };
+
   const handleCreateLead = (e: FormEvent) => {
     e.preventDefault();
     if (!newName.trim()) return;
@@ -164,7 +232,24 @@ export const LeadManager: FC<LeadManagerProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {exportFeedback && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-semibold animate-fade-in">
+              <Check className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{exportFeedback}</span>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => handleExportCSV(filteredLeads, isFiltered ? 'zpuce_organisations_filtrees_loi25' : 'zpuce_organisations_completes_loi25')}
+            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-slate-600 px-3.5 py-2 rounded-lg text-xs font-bold shadow transition-all"
+            title="Exporter la liste actuelle au format CSV pour rapports de conformité"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+            <span>Exporter CSV ({filteredLeads.length})</span>
+          </button>
+
           <button
             onClick={() => setShowAddModal(true)}
             className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-3.5 py-2 rounded-lg text-xs font-bold shadow-md shadow-emerald-500/20 transition-colors"
@@ -333,11 +418,20 @@ export const LeadManager: FC<LeadManagerProps> = ({
             </button>
           </div>
 
-          {/* Results Counter & Reset Button */}
+          {/* Results Counter & Actions */}
           <div className="flex items-center gap-2 text-xs">
             <span className="text-slate-400 font-mono">
               <strong className="text-emerald-400">{filteredLeads.length}</strong> / {leads.length} organisation{leads.length > 1 ? 's' : ''}
             </span>
+            <button
+              type="button"
+              onClick={() => handleExportCSV(filteredLeads, isFiltered ? 'zpuce_export_filtre' : 'zpuce_export_complet')}
+              className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition-colors border border-slate-700"
+              title="Exporter cette sélection au format CSV"
+            >
+              <Download className="w-3 h-3 text-emerald-400" />
+              <span>CSV</span>
+            </button>
             {isFiltered && (
               <button
                 type="button"
@@ -530,13 +624,22 @@ export const LeadManager: FC<LeadManagerProps> = ({
               </div>
 
               {/* Action */}
-              <div className="pt-2">
+              <div className="pt-2 space-y-2">
                 <button
                   onClick={() => onRunAudit(activeLeadDetails)}
                   className="w-full py-2.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-bold text-xs rounded-lg shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"
                 >
                   <Zap className="w-4 h-4 fill-slate-950" />
                   <span>Générer Rapport d&apos;Audit Certifié 2500$</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleExportCSV([activeLeadDetails], `zpuce_fiche_${activeLeadDetails.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}`)}
+                  className="w-full py-2 bg-slate-950 hover:bg-slate-800 text-slate-300 border border-slate-700 hover:border-slate-600 font-semibold text-xs rounded-lg flex items-center justify-center gap-2 transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Exporter cette Fiche Organisation (CSV)</span>
                 </button>
               </div>
             </div>

@@ -16,12 +16,63 @@ let aiClient: GoogleGenAI | null = null;
 function getAIClient(): GoogleGenAI | null {
   if (!aiClient && process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY") {
     try {
-      aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      aiClient = new GoogleGenAI({ 
+        apiKey: process.env.GEMINI_API_KEY,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
     } catch (e) {
       console.warn("Failed to initialize GoogleGenAI client:", e);
     }
   }
   return aiClient;
+}
+
+// Helper to generate AI executive synthesis with graceful multi-model fallback (handling 503 spikes)
+async function generateAuditExecutiveSummary(
+  ai: GoogleGenAI,
+  lead: any,
+  triggerType?: string,
+  customNotes?: string
+): Promise<string | null> {
+  const prompt = `Agis en tant que système d'audit souverain québécois Z-PUCE V5.0.0 (NetSecurePro / Mohammed Ilyes Zoubirou).
+Génère une synthèse exécutive hautement technique et juridique pour l'organisation: ${lead.name}.
+Secteur: ${lead.sector}
+Risque Loi 25: ${lead.loi25Score}/100
+Statut Entra ID: ${lead.entraIdTenantStatus}
+Vulnérabilités: ${Array.isArray(lead.activeVulnerabilities) ? lead.activeVulnerabilities.join(', ') : ''}
+Trigger actif: ${triggerType || 'Audit_Securite'}
+Notes: ${customNotes || 'Aucune'}
+
+Fournis 2 paragraphes très percutants en français québécois professionnel mentionnant les obligations strictes de la Loi 25 (articles 3.1, 8, 12, 17), le risque de pénalité maximale de la CAI (jusqu'à 25M$ ou 4% du CA mondial) et la recommandation d'intervention locale d'urgence.`;
+
+  const modelsToTry = ["gemini-3.7-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+
+  for (const model of modelsToTry) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+      });
+      if (response.text) {
+        return response.text;
+      }
+    } catch (err: any) {
+      // If temporary 503 (high demand) or 429, try next fallback model
+      const isTransient = err?.status === 503 || err?.code === 503 || err?.message?.includes("503") || err?.status === 429 || err?.message?.includes("demand");
+      if (isTransient) {
+        console.warn(`Model ${model} is experiencing high demand (503), attempting fallback model...`);
+        continue;
+      }
+      console.warn(`AI model ${model} error:`, err?.message || err);
+      break;
+    }
+  }
+
+  return null;
 }
 
 // 1. Health & Status
@@ -54,24 +105,7 @@ app.post("/api/audit/run", async (req: Request, res: Response) => {
     let aiEnhancedSummary: string | null = null;
 
     if (ai) {
-      try {
-        const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: `Agis en tant que système d'audit souverain québécois Z-PUCE V5.0.0 (NetSecurePro / Mohammed Ilyes Zoubirou).
-Génère une synthèse exécutive hautement technique et juridique pour l'organisation: ${lead.name}.
-Secteur: ${lead.sector}
-Risque Loi 25: ${lead.loi25Score}/100
-Statut Entra ID: ${lead.entraIdTenantStatus}
-Vulnérabilités: ${Array.isArray(lead.activeVulnerabilities) ? lead.activeVulnerabilities.join(', ') : ''}
-Trigger actif: ${triggerType || 'Audit_Securite'}
-Notes: ${customNotes || 'Aucune'}
-
-Fournis 2 paragraphes très percutants en français québécois professionnel mentionnant les obligations strictes de la Loi 25 (articles 3.1, 8, 12, 17), le risque de pénalité maximale de la CAI (jusqu'à 25M$ ou 4% du CA mondial) et la recommandation d'intervention locale d'urgence.`
-        });
-        aiEnhancedSummary = response.text || null;
-      } catch (err) {
-        console.warn("AI generation fallback to sovereign rule engine:", err);
-      }
+      aiEnhancedSummary = await generateAuditExecutiveSummary(ai, lead, triggerType, customNotes);
     }
 
     // Generate comprehensive sovereign report structure
