@@ -1,0 +1,6 @@
+{
+  "name": "Z-PUCE V5.0.0 – Plateforme IA Locale QC",
+  "description": "Plateforme souveraine d'audit Loi 25, sécurité TI et gouvernance pour le Québec, propulsée par les agents autonomes SNIPER, MEM et COMMS.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
