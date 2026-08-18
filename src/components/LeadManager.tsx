@@ -1,4 +1,4 @@
-import { FC, useState, FormEvent } from 'react';
+import { FC, useState, useMemo, FormEvent } from 'react';
 import { 
   Building2, 
   Search, 
@@ -12,7 +12,13 @@ import {
   DollarSign, 
   Lock, 
   ArrowUpRight,
-  Filter
+  Filter,
+  X,
+  SlidersHorizontal,
+  RotateCcw,
+  Sparkles,
+  ShieldCheck,
+  TrendingDown
 } from 'lucide-react';
 import { LeadOrg, RiskLevel } from '../types';
 
@@ -30,6 +36,9 @@ export const LeadManager: FC<LeadManagerProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSector, setSelectedSector] = useState<string>('ALL');
   const [selectedRisk, setSelectedRisk] = useState<string>('ALL');
+  const [minScore, setMinScore] = useState<number>(0);
+  const [maxScore, setMaxScore] = useState<number>(100);
+  const [sortBy, setSortBy] = useState<'risk' | 'score-asc' | 'score-desc' | 'name' | 'sanction'>('risk');
   const [showAddModal, setShowAddModal] = useState(false);
   const [activeLeadDetails, setActiveLeadDetails] = useState<LeadOrg | null>(leads[0] || null);
 
@@ -46,14 +55,58 @@ export const LeadManager: FC<LeadManagerProps> = ({
   const [newOfficer, setNewOfficer] = useState(false);
   const [newVulnerabilities, setNewVulnerabilities] = useState('MFA non requis pour télétravail, Absence de registre CAI');
 
-  const filteredLeads = leads.filter((lead) => {
-    const matchesSearch = lead.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      lead.headquarters.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      lead.cisoContact.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesSector = selectedSector === 'ALL' || lead.sector === selectedSector;
-    const matchesRisk = selectedRisk === 'ALL' || lead.overallRisk === selectedRisk;
-    return matchesSearch && matchesSector && matchesRisk;
-  });
+  // Calculate compliance counts
+  const complianceCounts = useMemo(() => {
+    return {
+      all: leads.length,
+      critique: leads.filter((l) => l.overallRisk === 'CRITIQUE').length,
+      eleve: leads.filter((l) => l.overallRisk === 'ÉLEVÉ').length,
+      modere: leads.filter((l) => l.overallRisk === 'MODÉRÉ').length,
+      conforme: leads.filter((l) => l.overallRisk === 'CONFORME').length,
+    };
+  }, [leads]);
+
+  const filteredLeads = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    const result = leads.filter((lead) => {
+      const matchesSearch = !term || 
+        lead.name.toLowerCase().includes(term) ||
+        lead.headquarters.toLowerCase().includes(term) ||
+        lead.cisoContact.toLowerCase().includes(term) ||
+        lead.sector.toLowerCase().includes(term) ||
+        lead.entraIdTenantStatus.toLowerCase().includes(term) ||
+        lead.overallRisk.toLowerCase().includes(term) ||
+        lead.activeVulnerabilities.some(v => v.toLowerCase().includes(term));
+
+      const matchesSector = selectedSector === 'ALL' || lead.sector === selectedSector;
+      const matchesRisk = selectedRisk === 'ALL' || lead.overallRisk === selectedRisk;
+      const matchesScore = lead.loi25Score >= minScore && lead.loi25Score <= maxScore;
+
+      return matchesSearch && matchesSector && matchesRisk && matchesScore;
+    });
+
+    // Sorting
+    return result.sort((a, b) => {
+      if (sortBy === 'score-asc') return a.loi25Score - b.loi25Score;
+      if (sortBy === 'score-desc') return b.loi25Score - a.loi25Score;
+      if (sortBy === 'name') return a.name.localeCompare(b.name);
+      if (sortBy === 'sanction') return b.maxSanctionRisk - a.maxSanctionRisk;
+      // Default: risk priority (CRITIQUE > ÉLEVÉ > MODÉRÉ > FAIBLE / CONFORME)
+      const priority: Record<RiskLevel, number> = { CRITIQUE: 5, ÉLEVÉ: 4, MODÉRÉ: 3, FAIBLE: 2, CONFORME: 1 };
+      return (priority[b.overallRisk] || 0) - (priority[a.overallRisk] || 0);
+    });
+  }, [leads, searchTerm, selectedSector, selectedRisk, minScore, maxScore, sortBy]);
+
+  const isFiltered = searchTerm !== '' || selectedSector !== 'ALL' || selectedRisk !== 'ALL' || minScore > 0 || maxScore < 100;
+
+  const handleResetFilters = () => {
+    setSearchTerm('');
+    setSelectedSector('ALL');
+    setSelectedRisk('ALL');
+    setMinScore(0);
+    setMaxScore(100);
+    setSortBy('risk');
+  };
 
   const handleCreateLead = (e: FormEvent) => {
     e.preventDefault();
@@ -122,48 +175,181 @@ export const LeadManager: FC<LeadManagerProps> = ({
         </div>
       </div>
 
-      {/* Filter & Search Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-950 p-3 rounded-lg border border-slate-800">
-        <div className="relative">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-          <input
-            type="text"
-            placeholder="Rechercher par nom, ville, contact..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-700 text-white text-xs rounded-md pl-9 pr-3 py-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none placeholder:text-slate-500"
-          />
+      {/* Real-time Search & Compliance Filter Section */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 space-y-3.5 shadow-lg">
+        {/* Top Search Bar & Sort Dropdown */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+          {/* Real-Time Input with Clear Button */}
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-emerald-400 absolute left-3.5 top-3 pointer-events-none" />
+            <input
+              id="lead-search-input"
+              type="text"
+              placeholder="Recherche en temps réel par nom, niveau de conformité, ville, contact..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-700/80 text-white text-xs rounded-lg pl-10 pr-9 py-2.5 focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 focus:outline-none placeholder:text-slate-500 transition-all font-sans"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="absolute right-2.5 top-2.5 p-1 rounded-full text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                title="Effacer la recherche"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Sector Filter */}
+          <div className="flex items-center gap-2 min-w-[190px]">
+            <Filter className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <select
+              id="lead-sector-filter"
+              value={selectedSector}
+              onChange={(e) => setSelectedSector(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-700/80 text-white text-xs rounded-lg px-2.5 py-2.5 focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 focus:outline-none"
+            >
+              <option value="ALL">Tous les Secteurs</option>
+              <option value="Banque & Finance">Banque & Finance</option>
+              <option value="Énergie & Utilités">Énergie & Utilités</option>
+              <option value="Société d'État">Société d&apos;État</option>
+              <option value="Secteur Public">Secteur Public</option>
+              <option value="Services TI & Conseil">Services TI & Conseil</option>
+              <option value="PME / Manufacturier">PME / Manufacturier</option>
+            </select>
+          </div>
+
+          {/* Sort Dropdown */}
+          <div className="flex items-center gap-2 min-w-[180px]">
+            <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <select
+              id="lead-sort-by"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="w-full bg-slate-950 border border-slate-700/80 text-white text-xs rounded-lg px-2.5 py-2.5 focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 focus:outline-none"
+            >
+              <option value="risk">Trier par : Priorité Risque</option>
+              <option value="score-asc">Score Loi 25 (Plus faible)</option>
+              <option value="score-desc">Score Loi 25 (Plus élevé)</option>
+              <option value="sanction">Risque Amende CAI (Max)</option>
+              <option value="name">Nom d&apos;organisation (A-Z)</option>
+            </select>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Filter className="w-3.5 h-3.5 text-slate-400" />
-          <select
-            value={selectedSector}
-            onChange={(e) => setSelectedSector(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-700 text-white text-xs rounded-md px-2.5 py-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none"
-          >
-            <option value="ALL">Tous les Secteurs</option>
-            <option value="Banque & Finance">Banque & Finance</option>
-            <option value="Énergie & Utilités">Énergie & Utilités</option>
-            <option value="Société d'État">Société d&apos;État</option>
-            <option value="Secteur Public">Secteur Public</option>
-            <option value="Services TI & Conseil">Services TI & Conseil</option>
-            <option value="PME / Manufacturier">PME / Manufacturier</option>
-          </select>
-        </div>
+        {/* Quick Filter Badges for Compliance Level */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/80">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-semibold text-slate-400 mr-1 flex items-center gap-1">
+              <span>Niveau de Conformité :</span>
+            </span>
 
-        <div>
-          <select
-            value={selectedRisk}
-            onChange={(e) => setSelectedRisk(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-700 text-white text-xs rounded-md px-2.5 py-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none"
-          >
-            <option value="ALL">Tous les Niveaux de Risque</option>
-            <option value="CRITIQUE">Risque Critique</option>
-            <option value="ÉLEVÉ">Risque Élevé</option>
-            <option value="MODÉRÉ">Risque Modéré</option>
-            <option value="CONFORME">Conforme / Faible</option>
-          </select>
+            {/* ALL */}
+            <button
+              type="button"
+              onClick={() => setSelectedRisk('ALL')}
+              className={`text-xs px-2.5 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 border ${
+                selectedRisk === 'ALL'
+                  ? 'bg-slate-100 text-slate-950 border-white shadow'
+                  : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700'
+              }`}
+            >
+              <span>Tous</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                selectedRisk === 'ALL' ? 'bg-slate-300 text-slate-950' : 'bg-slate-800 text-slate-300'
+              }`}>
+                {complianceCounts.all}
+              </span>
+            </button>
+
+            {/* CRITIQUE */}
+            <button
+              type="button"
+              onClick={() => setSelectedRisk('CRITIQUE')}
+              className={`text-xs px-2.5 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 border ${
+                selectedRisk === 'CRITIQUE'
+                  ? 'bg-rose-500 text-white border-rose-400 shadow-md shadow-rose-500/20'
+                  : 'bg-rose-500/10 text-rose-300 border-rose-500/30 hover:bg-rose-500/20'
+              }`}
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+              <span>Critique (&lt;50%)</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-rose-950/80 text-rose-200 font-mono border border-rose-500/30">
+                {complianceCounts.critique}
+              </span>
+            </button>
+
+            {/* ÉLEVÉ */}
+            <button
+              type="button"
+              onClick={() => setSelectedRisk('ÉLEVÉ')}
+              className={`text-xs px-2.5 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 border ${
+                selectedRisk === 'ÉLEVÉ'
+                  ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-md shadow-amber-500/20'
+                  : 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20'
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+              <span>Élevé (50-69%)</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-950/80 text-amber-200 font-mono border border-amber-500/30">
+                {complianceCounts.eleve}
+              </span>
+            </button>
+
+            {/* MODÉRÉ */}
+            <button
+              type="button"
+              onClick={() => setSelectedRisk('MODÉRÉ')}
+              className={`text-xs px-2.5 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 border ${
+                selectedRisk === 'MODÉRÉ'
+                  ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-md shadow-cyan-500/20'
+                  : 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/20'
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Modéré (70-84%)</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-cyan-950/80 text-cyan-200 font-mono border border-cyan-500/30">
+                {complianceCounts.modere}
+              </span>
+            </button>
+
+            {/* CONFORME */}
+            <button
+              type="button"
+              onClick={() => setSelectedRisk('CONFORME')}
+              className={`text-xs px-2.5 py-1 rounded-md font-semibold transition-all flex items-center gap-1.5 border ${
+                selectedRisk === 'CONFORME'
+                  ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/20'
+                  : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
+              }`}
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Conforme (85%+)</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-950/80 text-emerald-200 font-mono border border-emerald-500/30">
+                {complianceCounts.conforme}
+              </span>
+            </button>
+          </div>
+
+          {/* Results Counter & Reset Button */}
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-400 font-mono">
+              <strong className="text-emerald-400">{filteredLeads.length}</strong> / {leads.length} organisation{leads.length > 1 ? 's' : ''}
+            </span>
+            {isFiltered && (
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs transition-colors border border-slate-700"
+                title="Réinitialiser tous les filtres"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Réinitialiser</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -173,6 +359,9 @@ export const LeadManager: FC<LeadManagerProps> = ({
         <div className="lg:col-span-7 space-y-3">
           {filteredLeads.map((lead) => {
             const isSelected = activeLeadDetails?.id === lead.id;
+            const scoreColor = lead.loi25Score >= 85 ? 'bg-emerald-400' : lead.loi25Score >= 70 ? 'bg-cyan-400' : lead.loi25Score >= 50 ? 'bg-amber-400' : 'bg-rose-400';
+            const scoreTextColor = lead.loi25Score >= 85 ? 'text-emerald-400' : lead.loi25Score >= 70 ? 'text-cyan-400' : lead.loi25Score >= 50 ? 'text-amber-400' : 'text-rose-400';
+
             return (
               <div
                 key={lead.id}
@@ -196,20 +385,30 @@ export const LeadManager: FC<LeadManagerProps> = ({
 
                   <div className="text-right">
                     <span
-                      className={`text-xs px-2 py-0.5 rounded font-bold font-mono inline-block ${
+                      className={`text-xs px-2.5 py-0.5 rounded font-bold font-mono inline-block ${
                         lead.overallRisk === 'CRITIQUE'
                           ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
                           : lead.overallRisk === 'ÉLEVÉ'
                           ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                          : lead.overallRisk === 'MODÉRÉ'
+                          ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
                           : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                       }`}
                     >
                       {lead.overallRisk}
                     </span>
-                    <div className="text-xs text-slate-300 font-semibold mt-1">
-                      Score: {lead.loi25Score}/100
+                    <div className={`text-xs font-semibold mt-1 font-mono ${scoreTextColor}`}>
+                      Conformité: {lead.loi25Score}%
                     </div>
                   </div>
+                </div>
+
+                {/* Score Progress Bar */}
+                <div className="mt-2.5 w-full bg-slate-950 h-1.5 rounded-full overflow-hidden border border-slate-800">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${scoreColor}`}
+                    style={{ width: `${Math.max(5, lead.loi25Score)}%` }}
+                  />
                 </div>
 
                 <div className="mt-3 pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
@@ -226,8 +425,22 @@ export const LeadManager: FC<LeadManagerProps> = ({
           })}
 
           {filteredLeads.length === 0 && (
-            <div className="p-8 text-center bg-slate-900/40 border border-slate-800 rounded-xl text-slate-400 text-sm">
-              Aucune organisation ne correspond aux filtres sélectionnés.
+            <div className="p-10 text-center bg-slate-900/40 border border-slate-800 rounded-xl space-y-3">
+              <Search className="w-8 h-8 text-slate-500 mx-auto" />
+              <div className="text-white font-semibold text-sm">
+                Aucune organisation trouvée
+              </div>
+              <p className="text-slate-400 text-xs max-w-sm mx-auto">
+                Aucun résultat ne correspond à &quot;{searchTerm}&quot; ou aux critères de conformité sélectionnés.
+              </p>
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-colors border border-slate-700 mt-2"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Effacer tous les filtres</span>
+              </button>
             </div>
           )}
         </div>
